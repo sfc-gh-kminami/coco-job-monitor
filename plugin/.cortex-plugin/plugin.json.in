@@ -1,0 +1,112 @@
+{
+  "name": "coco-job-monitor",
+  "version": "0.1.0",
+  "description": "Cortex Code Desktop の全ワークスペース横断ジョブ監視ウィンドウ（Rust GPUI）と連動するライフサイクルフック＋起動スキル",
+  "skills": ["skills"],
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh __HOME__/.snowflake/cortex/plugins/coco-job-monitor/scripts/notify.sh",
+            "timeout": 3,
+            "enabled": true
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh __HOME__/.snowflake/cortex/plugins/coco-job-monitor/scripts/notify.sh",
+            "timeout": 3,
+            "enabled": true
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh __HOME__/.snowflake/cortex/plugins/coco-job-monitor/scripts/notify.sh",
+            "timeout": 3,
+            "enabled": true
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh __HOME__/.snowflake/cortex/plugins/coco-job-monitor/scripts/notify.sh",
+            "timeout": 3,
+            "enabled": true
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh __HOME__/.snowflake/cortex/plugins/coco-job-monitor/scripts/notify.sh",
+            "timeout": 3,
+            "enabled": true
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh __HOME__/.snowflake/cortex/plugins/coco-job-monitor/scripts/notify.sh",
+            "timeout": 3,
+            "enabled": true
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh __HOME__/.snowflake/cortex/plugins/coco-job-monitor/scripts/notify.sh",
+            "timeout": 3,
+            "enabled": true
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh __HOME__/.snowflake/cortex/plugins/coco-job-monitor/scripts/notify.sh",
+            "timeout": 3,
+            "enabled": true
+          }
+        ]
+      }
+    ]
+  }
+}

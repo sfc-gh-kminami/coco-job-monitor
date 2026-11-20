@@ -1,0 +1,57 @@
+[package]
+name = "coco-job-monitor"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow = "1"
+gpui-kit = "0.10.0"
+image = { version = "0.25", default-features = false, features = ["gif", "png"] }
+notify = "8.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+smol = "2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+core-graphics = "0.24"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = [
+    "NSApplication",
+    "NSButton",
+    "NSCell",
+    "NSControl",
+    "NSImage",
+    "NSRunningApplication",
+    "NSScreen",
+    "NSStatusBar",
+    "NSStatusBarButton",
+    "NSStatusItem",
+    "NSWindow",
+] }
+objc2-foundation = { version = "0.3", features = [
+    "NSArray",
+    "NSData",
+    "NSGeometry",
+    "NSObject",
+    "NSString",
+] }
+
+[profile.dev]
+debug = "limited"
+split-debuginfo = "unpacked"
+
+[profile.dev.package]
+resvg = { opt-level = 3 }
+rustybuzz = { opt-level = 3 }
+taffy = { opt-level = 3 }
+ttf-parser = { opt-level = 3 }
+smol = { opt-level = 3 }
+gpui-pre = { opt-level = 3 }
+gpui-pre-platform = { opt-level = 3 }
+gpui-pre-sum-tree = { opt-level = 3 }
+ropey = { opt-level = 3 }
+
+[profile.release]
+strip = "symbols"

@@ -1,0 +1,1662 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coding Agent Protocol &amp; Harness Internals — プロンプトからAPI往復・ツール実行までの完全解剖</title>
+<style>
+  :root {
+    --bg-0: #060911;
+    --bg-1: #0b111e;
+    --bg-2: #10192b;
+    --bg-3: #16223a;
+    --border: #223354;
+    --border-hi: #365387;
+    --text-0: #f8fafc;
+    --text-1: #cbd5e1;
+    --text-2: #7f95b8;
+    --cyan: #29b5e8;
+    --blue: #3b82f6;
+    --violet: #8b5cf6;
+    --amber: #f59e0b;
+    --emerald: #10b981;
+    --coral: #ef4444;
+    --mono: "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg-0);
+    color: var(--text-0);
+    font-family: var(--sans);
+    line-height: 1.6;
+  }
+
+  /* Top Navigation */
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(6, 9, 17, 0.90);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 11px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--cyan);
+    letter-spacing: 0.03em;
+  }
+  .brand-tag {
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: rgba(41, 181, 232, 0.14);
+    border: 1px solid rgba(41, 181, 232, 0.4);
+    font-size: 11px;
+  }
+  .nav {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .nav a {
+    color: var(--text-1);
+    text-decoration: none;
+    font-size: 12.5px;
+    font-weight: 600;
+    padding: 5px 11px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+  }
+  .nav a:hover {
+    background: var(--bg-2);
+    border-color: var(--border-hi);
+    color: #fff;
+  }
+
+  .wrap {
+    max-width: 1380px;
+    margin: 0 auto;
+    padding: 32px 24px 96px;
+  }
+
+  /* Header */
+  .hero {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 28px;
+    margin-bottom: 36px;
+  }
+  .hero-kicker {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--cyan);
+    margin-bottom: 8px;
+  }
+  h1 {
+    margin: 0 0 12px;
+    font-size: clamp(24px, 2.7vw, 34px);
+    line-height: 1.28;
+    letter-spacing: -0.01em;
+  }
+  .hero-desc {
+    margin: 0;
+    max-width: 980px;
+    color: var(--text-1);
+    font-size: 14.5px;
+  }
+  .key-equation {
+    margin-top: 18px;
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 10px 16px;
+    background: var(--bg-1);
+    border: 1px solid var(--border-hi);
+    border-radius: 10px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+  }
+  .eq-hl { color: var(--cyan); font-weight: 700; }
+  .eq-warn { color: var(--amber); font-weight: 700; }
+  .eq-ok { color: var(--emerald); font-weight: 700; }
+
+  section { margin-top: 52px; }
+  .sec-title {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+  .sec-title h2 {
+    margin: 0;
+    font-size: 20px;
+    letter-spacing: -0.01em;
+  }
+  .sec-title span {
+    font-size: 13px;
+    color: var(--text-2);
+  }
+
+  /* =========================================================
+     SECTION 1: 4-BOUNDARY ARCHITECTURE MAP WITH LIVE PACKETS
+     ========================================================= */
+  .arch-board {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+    overflow-x: auto;
+  }
+  .arch-svg {
+    width: 100%;
+    min-width: 980px;
+    height: 300px;
+    display: block;
+  }
+  .zone-box {
+    fill: #0d1628;
+    stroke: #24385c;
+    stroke-width: 1.5;
+  }
+  .zone-cloud {
+    fill: #0d1830;
+    stroke: #2563eb;
+    stroke-width: 1.8;
+    stroke-dasharray: 6 4;
+  }
+  .comp-box {
+    fill: #13203a;
+    stroke: #334e7d;
+    stroke-width: 1.2;
+  }
+  .wire-line {
+    fill: none;
+    stroke: #2b426b;
+    stroke-width: 2;
+  }
+  .wire-active-req {
+    fill: none;
+    stroke: var(--cyan);
+    stroke-width: 2.5;
+    stroke-dasharray: 7 6;
+    animation: flowFwd 0.75s infinite linear;
+  }
+  .wire-active-res {
+    fill: none;
+    stroke: var(--violet);
+    stroke-width: 2.5;
+    stroke-dasharray: 7 6;
+    animation: flowFwd 0.75s infinite linear;
+  }
+  .wire-active-sql {
+    fill: none;
+    stroke: var(--emerald);
+    stroke-width: 2;
+    stroke-dasharray: 5 5;
+    animation: flowFwd 0.9s infinite linear;
+  }
+
+  /* =========================================================
+     SECTION 2: STEP-BY-STEP PROTOCOL & HARNESS DEBUGGER
+     ========================================================= */
+  .debugger {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 22px 55px rgba(0, 0, 0, 0.5);
+  }
+  .dbg-bar {
+    background: #080d18;
+    border-bottom: 1px solid var(--border);
+    padding: 12px 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .dbg-btns {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .btn {
+    appearance: none;
+    background: var(--bg-2);
+    border: 1px solid var(--border-hi);
+    color: var(--text-0);
+    font-family: var(--sans);
+    font-size: 12.5px;
+    font-weight: 700;
+    padding: 7px 13px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.14s ease;
+  }
+  .btn:hover { background: var(--bg-3); border-color: var(--cyan); }
+  .btn.primary {
+    background: #0284c7;
+    border-color: #38bdf8;
+    color: #fff;
+  }
+  .btn.approve {
+    background: #d97706;
+    border-color: #fde68a;
+    color: #060911;
+    animation: pulseAmber 1.1s infinite ease-in-out;
+  }
+
+  /* 10-Step Stepper Strip */
+  .stepper {
+    display: grid;
+    grid-template-columns: repeat(10, minmax(112px, 1fr));
+    gap: 4px;
+    padding: 10px 14px;
+    background: #090f1d;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+  }
+  .step-pill {
+    padding: 7px 8px;
+    border-radius: 7px;
+    background: #0e1729;
+    border: 1px solid #1c2c49;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    text-align: left;
+  }
+  .step-pill:hover { border-color: var(--border-hi); }
+  .step-pill .sn {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-2);
+    display: flex;
+    justify-content: space-between;
+  }
+  .step-pill .st {
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--text-1);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .step-pill.active {
+    background: rgba(41, 181, 232, 0.15);
+    border-color: var(--cyan);
+  }
+  .step-pill.active .sn { color: var(--cyan); }
+  .step-pill.active .st { color: #fff; }
+  .step-pill.gate.active {
+    background: rgba(245, 158, 11, 0.18);
+    border-color: var(--amber);
+  }
+  .step-pill.gate.active .sn { color: #fcd34d; }
+
+  /* Step Narrative Banner */
+  .step-summary-bar {
+    padding: 14px 20px;
+    background: linear-gradient(90deg, rgba(41,181,232,0.10), rgba(139,92,246,0.06));
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .step-summary-main { flex: 1; min-width: 280px; }
+  .step-summary-title {
+    font-size: 16px;
+    font-weight: 800;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .iter-badge {
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 5px;
+    background: #172554;
+    border: 1px solid #3b82f6;
+    color: #93c5fd;
+  }
+  .step-summary-desc {
+    margin: 4px 0 0;
+    font-size: 13.5px;
+    color: var(--text-1);
+  }
+  .owner-chip {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 700;
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: #0b1324;
+    white-space: nowrap;
+  }
+
+  /* Debugger Main 2-Column Workspace */
+  .dbg-body {
+    display: grid;
+    grid-template-columns: 1.05fr 1.15fr;
+    min-height: 560px;
+  }
+  @media (max-width: 1080px) {
+    .dbg-body { grid-template-columns: 1fr; }
+  }
+  .dbg-left {
+    border-right: 1px solid var(--border);
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .dbg-right {
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .pane-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--text-2);
+    text-transform: uppercase;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+  }
+
+  /* Animated Live Sequence Diagram */
+  .seq-box {
+    background: #070c17;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px;
+  }
+  .seq-svg {
+    width: 100%;
+    height: 295px;
+    display: block;
+  }
+  .lane-hdr {
+    fill: #111c33;
+    stroke: #2c436b;
+    stroke-width: 1.3;
+  }
+  .lane-hdr.active-actor {
+    fill: #172e54;
+    stroke: var(--cyan);
+    stroke-width: 2;
+  }
+  .lane-line {
+    stroke: #1e2f4d;
+    stroke-width: 1.5;
+    stroke-dasharray: 4 4;
+  }
+  .seq-row { opacity: 0.24; transition: opacity 0.2s ease; cursor: pointer; }
+  .seq-row.past { opacity: 0.58; }
+  .seq-row.current { opacity: 1; }
+  .seq-packet-dot {
+    animation: packetHop 1.1s infinite cubic-bezier(0.35, 0, 0.25, 1);
+  }
+
+  /* Harness While-Loop Code Box */
+  .loop-code-box {
+    background: #070c17;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 14px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    line-height: 1.58;
+    overflow-x: auto;
+  }
+  .code-ln {
+    padding: 1px 8px;
+    border-radius: 4px;
+    color: #8ea4c8;
+    white-space: pre;
+    display: flex;
+    gap: 10px;
+  }
+  .code-ln .ln-no {
+    color: #42587d;
+    user-select: none;
+    width: 18px;
+    text-align: right;
+  }
+  .code-ln.hl {
+    background: rgba(41, 181, 232, 0.18);
+    border-left: 3px solid var(--cyan);
+    color: #ffffff;
+    font-weight: 700;
+  }
+  .code-ln.hl-warn {
+    background: rgba(245, 158, 11, 0.22);
+    border-left: 3px solid var(--amber);
+    color: #fde68a;
+    font-weight: 700;
+  }
+
+  /* Right Pane: Payload Inspector Tabs */
+  .payload-tabs {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .ptab {
+    background: #0b1324;
+    border: 1px solid var(--border);
+    color: var(--text-1);
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 700;
+    padding: 6px 12px;
+    border-radius: 7px;
+    cursor: pointer;
+  }
+  .ptab.active {
+    background: var(--bg-3);
+    border-color: var(--cyan);
+    color: #fff;
+  }
+  .payload-viewer {
+    flex: 1;
+    min-height: 310px;
+    max-height: 380px;
+    overflow: auto;
+    background: #060a13;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.56;
+    color: #dbeafe;
+  }
+  .payload-viewer pre {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .tok-cmt { color: #647f9e; }
+  .tok-k { color: #7dd3fc; }
+  .tok-s { color: #86efac; }
+  .tok-n { color: #fcd34d; }
+  .tok-kw { color: #c4b5fd; font-weight: 700; }
+
+  /* Context Byte Breakdown Meter */
+  .byte-meter-card {
+    background: #09101f;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 14px;
+  }
+  .byte-bar {
+    height: 14px;
+    border-radius: 99px;
+    background: #050912;
+    border: 1px solid #1d2d4b;
+    overflow: hidden;
+    display: flex;
+    margin: 8px 0;
+  }
+  .seg { height: 100%; transition: width 0.35s ease; }
+  .seg-sys { background: #3b82f6; }
+  .seg-skills { background: #8b5cf6; }
+  .seg-tools { background: #06b6d4; }
+  .seg-msgs { background: #10b981; }
+  .seg-res { background: #f59e0b; }
+  .byte-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-1);
+  }
+  .lg-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    margin-right: 5px;
+  }
+
+  /* =========================================================
+     SECTION 3: 5 DEEP MECHANISMS (CARDS)
+     ========================================================= */
+  .mech-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+  }
+  @media (max-width: 920px) { .mech-grid { grid-template-columns: 1fr; } }
+  .mech-card {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px 20px;
+  }
+  .mech-card h3 {
+    margin: 0 0 8px;
+    font-size: 15.5px;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .mech-num {
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 4px;
+    background: rgba(41, 181, 232, 0.16);
+    color: var(--cyan);
+  }
+  .mech-card p {
+    margin: 0 0 10px;
+    font-size: 13.5px;
+    color: var(--text-1);
+  }
+  .mini-code {
+    background: #060a13;
+    border: 1px solid #1b2a47;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: #cbd5e1;
+    overflow-x: auto;
+  }
+
+  /* =========================================================
+     SECTION 4: PROTOCOL -> MONITOR / ANIMATION MAPPING TABLE
+     ========================================================= */
+  .map-table-wrap {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow-x: auto;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  th, td {
+    padding: 11px 14px;
+    text-align: left;
+    border-bottom: 1px solid #1a2844;
+  }
+  th {
+    background: #09101f;
+    color: var(--text-2);
+    font-family: var(--mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+  code {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    background: rgba(56, 189, 248, 0.10);
+    color: #bae6fd;
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+
+  @keyframes flowFwd { to { stroke-dashoffset: -26; } }
+  @keyframes pulseAmber {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.35); }
+    50% { box-shadow: 0 0 18px 2px rgba(245, 158, 11, 0.50); }
+  }
+  @keyframes packetHop {
+    0% { offset-distance: 0%; opacity: 0.2; }
+    15% { opacity: 1; }
+    85% { opacity: 1; }
+    100% { offset-distance: 100%; opacity: 0.2; }
+  }
+
+  footer {
+    margin-top: 64px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--text-2);
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-tag">PROTOCOL &amp; HARNESS INTERNALS</span>
+    <span>Cortex Code (CoCo) 実行基盤・API通信解剖図</span>
+  </div>
+  <nav class="nav">
+    <a href="#arch">1. 4層プロセス境界図</a>
+    <a href="#debugger">2. 10ステップ通信デバッガ</a>
+    <a href="#mechanisms">3. 誤解されやすい5大構造</a>
+    <a href="#mapping">4. プロトコル状態と監視マッピング</a>
+  </nav>
+</header>
+
+<div class="wrap">
+
+  <!-- HERO -->
+  <div class="hero">
+    <div class="hero-kicker">GROUND-TRUTH ARCHITECTURE (VERIFIED FROM COCO v1.25.4 / CLI v1.2.44)</div>
+    <h1>プロンプトを投げてから回答が終わるまで、<br>「ハーネス」と「API」の間で実際に何が起きているのか？</h1>
+    <p class="hero-desc">
+      Coding Agent の正体は「賢いLLM」単体ではありません。あなたのMac上で動く<strong>ローカル実行基盤（Harness: <code>cortex</code> プロセス）</strong>が、プロンプトにシステム指示・Skill・54個のツール定義スキーマを束ねて Snowflake の <code>/api/v2/cortex/agent:run</code> へ HTTPS POST し、SSEストリームで返ってくる <code>tool_use</code> 指示をインターセプトしてローカルで実行し、その結果を<strong>「擬似的な user メッセージ（<code>tool_result</code>）」として再びAPIへPOSTし直す <code>while</code> ループ</strong>そのものです。
+    </p>
+    <div class="key-equation">
+      <span>1回のユーザープロンプト</span>
+      <span>＝</span>
+      <span class="eq-hl">N回の HTTPS POST 往復 (Iteration 1..N)</span>
+      <span>＋</span>
+      <span class="eq-warn">ローカル権限ゲート (PermissionManager)</span>
+      <span>＋</span>
+      <span class="eq-ok">ローカルOS / SQL実行</span>
+    </div>
+  </div>
+
+  <!-- =========================================================
+       SECTION 1: 4-BOUNDARY SYSTEM ARCHITECTURE
+       ========================================================= -->
+  <section id="arch">
+    <div class="sec-title">
+      <h2>1. どこまでがローカルMacで、どこからがSnowflake Cloud APIか？（4つの境界線）</h2>
+      <span>最重要ポイント：クラウド上のLLMはあなたのMacのファイルやシェルに直接触れません。JSONで「呼びたいツール名と引数」を返すだけです。</span>
+    </div>
+
+    <div class="arch-board">
+      <svg class="arch-svg" viewBox="0 0 1180 290">
+        <!-- Zone 1: Desktop UI -->
+        <rect class="zone-box" x="12" y="14" width="205" height="262" rx="12"/>
+        <text x="26" y="38" fill="#7dd3fc" font-family="monospace" font-size="11" font-weight="bold">① UI PROCESS (Electron)</text>
+        <text x="26" y="55" fill="#7f95b8" font-size="11">Cortex Code.app</text>
+        <rect class="comp-box" x="26" y="72" width="176" height="52" rx="8"/>
+        <text x="114" y="95" text-anchor="middle" fill="#fff" font-size="12" font-weight="bold">Chat UI / 承認ダイアログ</text>
+        <text x="114" y="112" text-anchor="middle" fill="#94a3b8" font-size="10.5">入力欄・Diff表示・Approveボタン</text>
+
+        <rect class="comp-box" x="26" y="142" width="176" height="52" rx="8"/>
+        <text x="114" y="165" text-anchor="middle" fill="#6ee7b7" font-size="12" font-weight="bold">state.vscdb (SQLite)</text>
+        <text x="114" y="182" text-anchor="middle" fill="#94a3b8" font-size="10.5">activeConversationV2 / isRead</text>
+
+        <rect class="comp-box" x="26" y="210" width="176" height="50" rx="8" stroke="#29b5e8"/>
+        <text x="114" y="232" text-anchor="middle" fill="#38bdf8" font-size="12" font-weight="bold">CoCo Job Monitor (GPUI)</text>
+        <text x="114" y="248" text-anchor="middle" fill="#94a3b8" font-size="10.5">127.0.0.1:47823 + FSEvents</text>
+
+        <!-- Zone 2: Local Harness -->
+        <rect class="zone-box" x="268" y="14" width="360" height="262" rx="12" stroke="#38bdf8"/>
+        <text x="284" y="38" fill="#38bdf8" font-family="monospace" font-size="11" font-weight="bold">② LOCAL HARNESS (cortex CLI / stream-json)</text>
+        <text x="284" y="55" fill="#7f95b8" font-size="11">制御ループの本体（あなたのMac上で稼働）</text>
+
+        <rect class="comp-box" x="284" y="70" width="158" height="54" rx="8"/>
+        <text x="363" y="92" text-anchor="middle" fill="#fff" font-size="11.5" font-weight="bold">Context Assembler</text>
+        <text x="363" y="109" text-anchor="middle" fill="#94a3b8" font-size="10">System + Skills + 54 Tool定義</text>
+
+        <rect class="comp-box" x="454" y="70" width="158" height="54" rx="8"/>
+        <text x="533" y="92" text-anchor="middle" fill="#fcd34d" font-size="11.5" font-weight="bold">Permission &amp; Hooks</text>
+        <text x="533" y="109" text-anchor="middle" fill="#94a3b8" font-size="10">PreToolUse / 承認ゲート停止</text>
+
+        <rect class="comp-box" x="284" y="138" width="328" height="58" rx="8"/>
+        <text x="448" y="160" text-anchor="middle" fill="#fff" font-size="12" font-weight="bold">Local Tool Executor &amp; Subagent Spawner</text>
+        <text x="448" y="179" text-anchor="middle" fill="#93c5fd" font-family="monospace" font-size="10.5">read / edit / bash(zsh) / mcp__* / task(子ループ生成)</text>
+
+        <rect class="comp-box" x="284" y="210" width="328" height="50" rx="8"/>
+        <text x="448" y="232" text-anchor="middle" fill="#cbd5e1" font-size="11.5" font-weight="bold">ローカル会話ログ永続化 (~/.snowflake/cortex/conversations)</text>
+        <text x="448" y="248" text-anchor="middle" fill="#94a3b8" font-family="monospace" font-size="10">&lt;session_id&gt;.json + &lt;session_id&gt;.history.jsonl</text>
+
+        <!-- Zone 3: Snowflake Cloud -->
+        <rect class="zone-cloud" x="720" y="14" width="446" height="262" rx="12"/>
+        <text x="738" y="38" fill="#93c5fd" font-family="monospace" font-size="11" font-weight="bold">③ SNOWFLAKE CLOUD (*.snowflakecomputing.com)</text>
+        <text x="738" y="55" fill="#7f95b8" font-size="11">HTTPS (TLS) 越しのステートフルスレッド &amp; LLM推論基盤</text>
+
+        <rect class="comp-box" x="738" y="72" width="410" height="62" rx="8"/>
+        <text x="943" y="95" text-anchor="middle" fill="#38bdf8" font-family="monospace" font-size="12" font-weight="bold">POST /api/v2/cortex/agent:run</text>
+        <text x="943" y="113" text-anchor="middle" fill="#cbd5e1" font-size="11">Thread管理 (/api/v2/cortex/threads/&lt;id&gt;) + Model Auto-Router</text>
+        <text x="943" y="127" text-anchor="middle" fill="#7f95b8" font-size="10">出力: SSE ストリーム (thinking_delta / text_delta / tool_use)</text>
+
+        <rect class="comp-box" x="738" y="148" width="198" height="52" rx="8"/>
+        <text x="837" y="170" text-anchor="middle" fill="#c4b5fd" font-size="11.5" font-weight="bold">Orchestration LLM</text>
+        <text x="837" y="186" text-anchor="middle" fill="#94a3b8" font-size="10">Opus / Sonnet / GPT / Gemini</text>
+
+        <rect class="comp-box" x="950" y="148" width="198" height="52" rx="8"/>
+        <text x="1049" y="170" text-anchor="middle" fill="#6ee7b7" font-size="11.5" font-weight="bold">Snowflake SQL Engine</text>
+        <text x="1049" y="186" text-anchor="middle" fill="#94a3b8" font-size="10">RSS制限付き子セッション経由</text>
+
+        <rect class="comp-box" x="738" y="212" width="410" height="48" rx="8"/>
+        <text x="943" y="233" text-anchor="middle" fill="#e2e8f0" font-size="11.5" font-weight="bold">Cortex Sense / Semantic Views / Object Search</text>
+        <text x="943" y="249" text-anchor="middle" fill="#94a3b8" font-size="10">テーブル定義・ドメイン知識・クエリパターンの検索インデックス</text>
+
+        <!-- Animated Wires -->
+        <!-- UI <-> Harness stdio -->
+        <path class="wire-active-req" d="M 202 92 L 284 92"/>
+        <text x="243" y="85" text-anchor="middle" fill="#7dd3fc" font-family="monospace" font-size="9.5">stdio JSON</text>
+
+        <!-- Harness -> Monitor Hook -->
+        <path class="wire-active-sql" d="M 284 235 L 202 235"/>
+        <text x="243" y="228" text-anchor="middle" fill="#6ee7b7" font-family="monospace" font-size="9.5">Hook POST</text>
+
+        <!-- Harness -> Cloud HTTPS POST -->
+        <path class="wire-active-req" d="M 612 88 L 738 88"/>
+        <text x="675" y="80" text-anchor="middle" fill="#38bdf8" font-family="monospace" font-size="9.5">HTTPS POST</text>
+
+        <!-- Cloud -> Harness SSE -->
+        <path class="wire-active-res" d="M 738 114 L 612 114"/>
+        <text x="675" y="128" text-anchor="middle" fill="#c4b5fd" font-family="monospace" font-size="9.5">SSE Stream</text>
+
+        <!-- Harness sql_execute -> Snowflake SQL -->
+        <path class="wire-active-sql" d="M 612 174 L 950 174"/>
+        <text x="675" y="167" text-anchor="middle" fill="#34d399" font-family="monospace" font-size="9.5">SQL Driver</text>
+      </svg>
+    </div>
+  </section>
+
+  <!-- =========================================================
+       SECTION 2: INTERACTIVE 10-STEP PROTOCOL DEBUGGER
+       ========================================================= -->
+  <section id="debugger">
+    <div class="sec-title">
+      <h2>2. ステップ実行デバッガ：プロンプト1回で裏側を流れる実データ全10工程</h2>
+      <span>例題：<code>「SALES.PUBLIC.ORDERS の欠損率を調べて summary.html に書き出して」</code> を投げた時の実際のパケット遷移</span>
+    </div>
+
+    <div class="debugger">
+      <!-- Controls -->
+      <div class="dbg-bar">
+        <div class="dbg-btns">
+          <button class="btn" id="btn-prev">◀ 前の工程</button>
+          <button class="btn primary" id="btn-next">次の工程へ進む ▶</button>
+          <button class="btn" id="btn-auto">▶ 自動ステップ再生</button>
+          <button class="btn approve" id="btn-gate-approve" style="display:none">
+            [人間がクリック] bash / write 実行を承認する (Approve)
+          </button>
+        </div>
+        <div style="font-family:var(--mono);font-size:12px;color:var(--text-2)" id="dbg-counter">
+          STEP 1 / 10
+        </div>
+      </div>
+
+      <!-- 10-Step Strip -->
+      <div class="stepper" id="stepper"></div>
+
+      <!-- Current Step Narrative -->
+      <div class="step-summary-bar">
+        <div class="step-summary-main">
+          <div class="step-summary-title">
+            <span class="iter-badge" id="sum-iter">ITERATION 1</span>
+            <span id="sum-title">-</span>
+          </div>
+          <p class="step-summary-desc" id="sum-desc">-</p>
+        </div>
+        <div class="owner-chip" id="sum-owner">-</div>
+      </div>
+
+      <!-- 2-Pane Debugger Body -->
+      <div class="dbg-body">
+        <!-- Left: Live Sequence Swimlanes + Harness While-Loop Code -->
+        <div class="dbg-left">
+          <div>
+            <div class="pane-label">
+              <span>SEQUENCE TIMELINE (クリックで該当工程へジャンプ)</span>
+              <span id="seq-direction" style="color:var(--cyan)">UI → Harness</span>
+            </div>
+            <div class="seq-box">
+              <svg class="seq-svg" viewBox="0 0 560 295" id="seq-svg"></svg>
+            </div>
+          </div>
+
+          <div>
+            <div class="pane-label">
+              <span>HARNESS CONTROL LOOP (ハーネス内部の実行中コード位置)</span>
+              <span>coco.agent / controlProtocol.loop</span>
+            </div>
+            <div class="loop-code-box" id="loop-code"></div>
+          </div>
+        </div>
+
+        <!-- Right: 3-Tab Exact Payload Viewer + Context Window Byte Meter -->
+        <div class="dbg-right">
+          <div>
+            <div class="pane-label">
+              <span>WIRE / DISK / HOOK PAYLOAD INSPECTOR (実データ構造)</span>
+              <span id="payload-byte-hint" style="color:var(--emerald)">UTF-8 JSON</span>
+            </div>
+            <div class="payload-tabs" id="payload-tabs">
+              <button class="ptab active" data-tab="wire">① 通信パケット (stdio / HTTP / SSE)</button>
+              <button class="ptab" data-tab="disk">② ローカル保存 (.history.jsonl / .json)</button>
+              <button class="ptab" data-tab="hook">③ 発火する Hook &amp; 監視状態</button>
+            </div>
+          </div>
+
+          <div class="payload-viewer" id="payload-viewer"></div>
+
+          <div class="byte-meter-card">
+            <div class="pane-label" style="margin-bottom:2px">
+              <span>API送信コンテキスト内訳 (実測ログ <code>coco.agent.logging</code> 準拠)</span>
+              <span id="ctx-total-label" style="color:#fff">Total: 185.8 KB</span>
+            </div>
+            <div class="byte-bar" id="byte-bar">
+              <div class="seg seg-sys" id="seg-sys" style="width:14%" title="System Prompt & Guardrails"></div>
+              <div class="seg seg-skills" id="seg-skills" style="width:45%" title="Loaded Skills"></div>
+              <div class="seg seg-tools" id="seg-tools" style="width:18%" title="54 Tool JSON Schemas"></div>
+              <div class="seg seg-msgs" id="seg-msgs" style="width:8%" title="User Prompt & Assistant Text"></div>
+              <div class="seg seg-res" id="seg-res" style="width:0%" title="Accumulated Tool Results"></div>
+            </div>
+            <div class="byte-legend">
+              <span><i class="lg-dot" style="background:#3b82f6"></i>System指示 (~26KB)</span>
+              <span><i class="lg-dot" style="background:#8b5cf6"></i>Skills (~106KB)</span>
+              <span><i class="lg-dot" style="background:#06b6d4"></i>54 Tool定義Schema (~35KB)</span>
+              <span><i class="lg-dot" style="background:#10b981"></i>会話本文 (<span id="lg-msg-kb">18KB</span>)</span>
+              <span><i class="lg-dot" style="background:#f59e0b"></i>Tool実行結果 (<span id="lg-res-kb">0KB</span>)</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================
+       SECTION 3: 5 DEEP ARCHITECTURAL MECHANISMS
+       ========================================================= -->
+  <section id="mechanisms">
+    <div class="sec-title">
+      <h2>3. ここが分かるとすべて腑に落ちる！Coding Agent 5つの内部メカニズム</h2>
+      <span>単なるチャットAPI呼び出しと決定的に違う技術ポイント</span>
+    </div>
+
+    <div class="mech-grid">
+      <div class="mech-card">
+        <h3><span class="mech-num">01</span> クラウドへ送るのは「ツールのJSON定義」だけ、実行は100%ローカル</h3>
+        <p>APIリクエストの <code>tools[]</code> には、54個のツールの<strong>名前・説明文・引数JSON Schema</strong>しか入っていません。LLMは「<code>sql_execute</code> をこのSQL文字列で呼んでくれ（<code>client_side_execute: true</code>）」というJSON片をSSEで返すだけで、実際のDB接続やファイル編集はすべて手元のハーネスが行います。</p>
+        <div class="mini-code">LLMの出力 = 単なる構造化データ {"type":"tool_use","name":"edit","client_side_execute":true}<br>実際にファイルを書き換える主体 = Mac上の cortex ハーネスプロセス</div>
+      </div>
+
+      <div class="mech-card">
+        <h3><span class="mech-num">02</span> ツール実行結果は「人間になり代わった <code>role: "user"</code>」で返送される</h3>
+        <p>LLMのAPI仕様上、<code>assistant</code> の <code>tool_use</code> に対する返答は <code>role: "user"</code> メッセージの中に <code>type: "tool_result"</code> ブロックを入れて返す決まりになっています。そのため <code>.history.jsonl</code> を見ると、あなたが何も打っていなくても <code>assistant</code> と <code>user (tool_result)</code> が何十往復も記録されます。</p>
+        <div class="mini-code">{"role":"assistant","content":[{"type":"tool_use","tool_use":{"tool_use_id":"toolu_01A",...}}]}<br>{"role":"user",     "content":[{"type":"tool_result","tool_result":{"tool_use_id":"toolu_01A",...}}]}</div>
+      </div>
+
+      <div class="mech-card">
+        <h3><span class="mech-num">03</span> なぜ「承認待ち」で完全に時が止まるのか？</h3>
+        <p>LLMが <code>tool_use</code> を出力した時点で、<strong>1回目のHTTPレスポンス（SSEストリーム）はすでに完了して切断されています</strong>。ハーネスがローカルの <code>await permissionManager.confirm()</code> で一時停止しているため、あなたが Approve を押さない限り<strong>2回目のHTTP POST自体が永久に送信されません</strong>。</p>
+        <div class="mini-code">// 承認待ちの間、クラウド側では何も動いていない（クレジット消費もゼロ）<br>const decision = await permissionManager.requestUserApproval(toolCall); // ← ここでブロック！</div>
+      </div>
+
+      <div class="mech-card">
+        <h3><span class="mech-num">04</span> サブエージェント (<code>task</code>) は「別スレッド・別コンテキスト」の独立ループ</h3>
+        <p>ファイルを20個読む探索を親ループで直接やると、<code>tool_result</code> だけでコンテキスト枠が埋め尽くされます。<code>task(subagent_type: "explore")</code> を呼ぶと、ハーネスは<strong>別の <code>subagentSessionId</code> と専用スレッド</strong>で子ループを回し、最終レポート文字列だけを親の <code>tool_result</code> 1個に圧縮して返します。</p>
+        <div class="mini-code">親コンテキスト消費 = 子エージェントの最終要約（数KB）のみ！<br>子の試行錯誤（数十回の grep / read）は親のトークン枠を汚さない</div>
+      </div>
+
+      <div class="mech-card" style="grid-column: 1 / -1">
+        <h3><span class="mech-num">05</span> Snowflake Thread キャッシュ (<code>thread_id</code>) と SQL 専用子セッション (RSS) の分離</h3>
+        <p>CoCo は毎回全履歴をゼロから再送するのではなく、Snowflake側の <code>/api/v2/cortex/threads/&lt;thread_id&gt;</code> に会話スレッドを保持し、差分メッセージだけを <code>agent:run</code> に積みます（ログの <code>lastSyncedHistoryLength</code>）。さらに <code>sql_execute</code> ツールはエージェントAPIとは別の <strong>Restricted Session Scope (RSS) 子セッション</strong>上でクエリを実行するため、クエリ結果が巨大でもハーネス側でサマリー＋ファイル退避してから安全に次の <code>POST</code> へ渡せます。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================
+       SECTION 4: MAPPING PROTOCOL STATES TO MONITOR & AVATAR
+       ========================================================= -->
+  <section id="mapping">
+    <div class="sec-title">
+      <h2>4. だから Job Monitor とアニメーションはこの状態区分になる（プロトコル対応表）</h2>
+      <span>内部でどの関数・どの通信フェーズに居るかが1対1で対応しています</span>
+    </div>
+
+    <div class="map-table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>モニター / アバター状態</th>
+            <th>ハーネス内部の正確な実行位置</th>
+            <th>通信・プロセスの状態</th>
+            <th>ボール保持者 / 音</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong style="color:#7dd3fc">Thinking (思考・計画)</strong></td>
+            <td><code>POST /api/v2/cortex/agent:run</code> 送信完了 → SSE <code>thinking_delta</code> / <code>text_delta</code> 受信中</td>
+            <td>HTTPS SSE ストリーム接続中（LLM推論中）</td>
+            <td>Agent / 無音</td>
+          </tr>
+          <tr>
+            <td><strong style="color:#fcd34d">Waiting (承認・回答待ち)</strong></td>
+            <td>SSE切断後、<code>permissionManager.confirm()</code> または <code>ask_user_question</code> の stdio 応答待ちで <code>await</code> 停止中</td>
+            <td>HTTP通信なし・CPUゼロで人間のクリック待ち</td>
+            <td><strong style="color:#fcd34d">人間 / Ping音</strong></td>
+          </tr>
+          <tr>
+            <td><strong style="color:#38bdf8">Searching / Working / Cmd</strong></td>
+            <td><code>toolExecutor.run()</code> 内で <code>sql_execute</code> / <code>edit</code> / <code>bash(zsh)</code> をローカル実行し <code>tool_result</code> を組み立て中</td>
+            <td>ローカルI/O・子プロセス・Snowflake SQL 実行中</td>
+            <td>Agent / 無音</td>
+          </tr>
+          <tr>
+            <td><strong style="color:#c4b5fd">Squad (分身並列召喚)</strong></td>
+            <td><code>task</code> ツールが複数の子 <code>session_id</code> ループを <code>Promise.all</code> 相当で並列実行中</td>
+            <td>複数の独立 <code>agent:run</code> SSE ストリームが並列稼働</td>
+            <td>Agent群 / 無音</td>
+          </tr>
+          <tr>
+            <td><strong style="color:#f87171">Trouble / Stalled (スタック)</strong></td>
+            <td><code>outcome: "running"</code> のまま 180秒間 SSE受信も Hook発火も <code>.history.jsonl</code> 追記もゼロ</td>
+            <td>対話入力ブロック（<code>[y/N]</code>等）・ネットワーク詰まり・未検知の停止</td>
+            <td>要確認 / エラー時Sosumi音</td>
+          </tr>
+          <tr>
+            <td><strong style="color:#6ee7b7">Done (完了・未確認)</strong></td>
+            <td>SSEレスポンスに <code>tool_use</code> が0件 → <code>while</code> ループ脱出 → <code>Stop</code> Hook発火 → <code>outcome: "success"</code> 保存</td>
+            <td>全通信完了。CoCoで4秒閲覧（<code>activeConversationV2</code>一致）で消去</td>
+            <td><strong style="color:#6ee7b7">人間確認待ち / Glass音</strong></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    <span>Verified against Cortex Code Desktop 1.25.4 / CLI 1.2.44 local telemetry schemas</span>
+    <span>coding-agent-anatomy.html</span>
+  </footer>
+
+</div>
+
+<script>
+/* =========================================================
+   HARNESS PSEUDOCODE LINES (SYNCHRONIZED WITH EACH STEP)
+   ========================================================= */
+const HARNESS_CODE = [
+  'async function runCodingAgentTurn(rawUserText) {',
+  '  await hooks.emit("UserPromptSubmit", { session_id });',
+  '  const enriched = injectRemindersAndSkills(rawUserText);',
+  '  historyJsonl.append({ role: "user", content: [enriched] });',
+  '  while (true) { // ← 自律エージェントループ (Iteration 1..N)',
+  '    const sse = await snowflakeRest.post("/api/v2/cortex/agent:run", buildPayload());',
+  '    const assistantMsg = await consumeSseStream(sse); // thinking + text + tool_use[]',
+  '    historyJsonl.append(assistantMsg);',
+  '    const toolCalls = assistantMsg.content.filter(b => b.type === "tool_use");',
+  '    if (toolCalls.length === 0) break; // ← tool_useが無ければ完了！ループ脱出',
+  '    for (const call of toolCalls) {',
+  '      await hooks.emit("PreToolUse", { tool_name: call.name });',
+  '      if (needsApproval(call)) await waitForHumanApproval(call); // ← 承認ゲート停止！',
+  '      const output = await executeLocalTool(call); // read / edit / bash / sql / task',
+  '      await hooks.emit("PostToolUse", { tool_name: call.name });',
+  '      historyJsonl.append({ role: "user", content: [toToolResult(call.id, output)] });',
+  '    }',
+  '  } // ← 次の Iteration の POST /api/v2/cortex/agent:run へ戻る！',
+  '  await hooks.emit("Stop", { session_id });',
+  '  sessionJson.save({ outcome: "success" });',
+  '}'
+];
+
+/* =========================================================
+   10 EXACT PROTOCOL STEPS
+   ========================================================= */
+const STEPS = [
+  {
+    step: 1,
+    iter: 'ITERATION 1 · 入力',
+    short: 'UIからプロンプト送信',
+    title: '① UI からローカルハーネスへ stdin (stream-json) でプロンプトが渡る',
+    desc: 'あなたが Enter を押した瞬間、まだクラウドには何も飛びません。Electron UI がローカル子プロセスとして動いている cortex ハーネスの標準入力（stdio）へ stream-json フレームを1行書き込みます。',
+    owner: '実行主体: UI → Local Harness',
+    ownerColor: '#38bdf8',
+    seqIdx: 0,
+    codeLines: [0],
+    warnLine: false,
+    msgKb: 4, resKb: 0,
+    wire: `// [UI (Electron)] ──stdio (stream-json)──▶ [Local Harness (cortex pid:26856)]
+{
+  "type": "user_input",
+  "session_id": "01934a10-7c00-7000-8000-000000000001",
+  "message_id": "a2df10f4",
+  "mode": "agent",
+  "model": "auto",
+  "content": [
+    {
+      "type": "text",
+      "text": "SALES.PUBLIC.ORDERS の欠損率を調べて summary.html に書き出して"
+    }
+  ]
+}`,
+    disk: `// まだ .history.jsonl 書き込み前のメモリ受信段階
+// session.json の状態:
+{
+  "session_id": "01934a10-7c00-7000-8000-000000000001",
+  "working_directory": "/Users/demo/analytics",
+  "thread": {
+    "threadId": "1000042",
+    "accountHost": "org-account.snowflakecomputing.com"
+  }
+}`,
+    hook: `// まだ Hook 発火前（次の数ミリ秒で UserPromptSubmit が発火）`
+  },
+  {
+    step: 2,
+    iter: 'ITERATION 1 · 前処理',
+    short: 'ハーネスが文脈を注入',
+    title: '② ハーネスが裏で Memory・Skill・<system-reminder> を自動注入して永続化',
+    desc: 'ハーネスはあなたの1行のテキストをそのまま投げるのではなく、関連メモリ（coco-memory-recall）・該当Skill（SKILL.md）・接続中Snowflakeアカウント情報を <system-reminder> として合体させ、.history.jsonl に保存します。',
+    owner: '実行主体: Local Harness (前処理)',
+    ownerColor: '#38bdf8',
+    seqIdx: 1,
+    codeLines: [1, 2, 3],
+    warnLine: false,
+    msgKb: 18, resKb: 0,
+    wire: `// ハーネス内部で組み立てられる拡張済み user コンテンツ
+[
+  {
+    "type": "text",
+    "internalOnly": true,
+    "text": "<system-reminder>\\nConnected account: ACME_ANALYTICS (user DEMO_USER)\\nToday's date: 2026-11-19\\n</system-reminder>"
+  },
+  {
+    "type": "text",
+    "is_user_prompt": true,
+    "message_id": "a2df10f4",
+    "text": "SALES.PUBLIC.ORDERS の欠損率を調べて summary.html に書き出して"
+  }
+]`,
+    disk: `// ~/.snowflake/cortex/conversations/<ws>/<sid>.history.jsonl に1行追記
+{"role":"user","content":[{"type":"text","internalOnly":true,"text":"<system-reminder>..."},{"type":"text","is_user_prompt":true,"message_id":"a2df10f4","text":"SALES.PUBLIC.ORDERS の欠損率を調べて summary.html に書き出して"}]}
+
+// <sid>.json の lastTurn が "running" に更新される
+"lastTurn": {
+  "requestId": "request_489f16b4-6ef5-4179-a88b-61912b168b1a",
+  "userMessageId": "a2df10f4",
+  "outcome": "running",
+  "historyLength": 435
+}`,
+    hook: `// sdk.hooks.executor が UserPromptSubmit を発火！
+// notify.sh が prompt 本文を捨てて 127.0.0.1:47823/event へ POST:
+{
+  "session_id": "01934a10-7c00-7000-8000-000000000001",
+  "cwd": "/Users/demo/analytics",
+  "hook_event_name": "UserPromptSubmit"
+}
+// → Job Monitor: ステータス「稼働中 (Thinking)」へ遷移（無音）`
+  },
+  {
+    step: 3,
+    iter: 'ITERATION 1 · API送信',
+    short: 'HTTPS POST #1 (agent:run)',
+    title: '③ Snowflake Cloud の /api/v2/cortex/agent:run へ 1回目の HTTPS POST',
+    desc: 'ここが1回目のクラウド通信です。システムプロンプト、ロード済みSkill（約106KB）、54個のツールJSONスキーマ定義（約35KB）、そして今回のメッセージを束ねてPOSTします。ツールの実装コード自体は送られません。',
+    owner: '通信中: Harness ──HTTPS POST──▶ Cloud',
+    ownerColor: '#29b5e8',
+    seqIdx: 2,
+    codeLines: [4, 5],
+    warnLine: false,
+    msgKb: 18, resKb: 0,
+    wire: `POST https://org-account.snowflakecomputing.com/api/v2/cortex/agent:run
+Authorization: Snowflake Token="<keychain_oauth_token>"
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "thread_id": "1000042",
+  "parent_message_id": "prev_msg_8821",
+  "agent": {
+    "type": "coding",
+    "spec": {
+      "model": "auto",
+      "thinking_effort": "high",
+      "system_prompt": "You are Cortex Code...",
+      "skills": [ /* 選択された SKILL.md 本文 (~106 KB) */ ]
+    }
+  },
+  "tools": [
+    { "name": "sql_execute", "description": "Execute SQL...", "input_schema": { "properties": { "sql": {"type":"string"} } } },
+    { "name": "write",       "description": "Writes a file...", "input_schema": { "properties": { "file_path": {"type":"string"} } } }
+    /* ...計 54 個のツール JSON Schema 定義のみ (~35 KB) */
+  ],
+  "messages": [ /* Step 2 の user メッセージ差分 */ ]
+}`,
+    disk: `// coco.log に記録される実測サイズ内訳:
+// Request size breakdown: total=185841B, messages=18420B,
+// skills=106500B, tool_results=0B`,
+    hook: `// HTTP レスポンス待機〜ストリーム受信中
+// Job Monitor 表示: 「稼働中 · 思考・応答生成中」`
+  },
+  {
+    step: 4,
+    iter: 'ITERATION 1 · SSE応答',
+    short: 'SSEで thinking + tool_use 受信',
+    title: '④ Cloud から SSE ストリームで「思考」と「tool_use（SQL実行依頼）」が返り、1回目の通信が終了',
+    desc: 'LLMは直接DBを叩けないため、「sql_execute ツールをこのSQLでローカル実行してください（client_side_execute: true）」という JSON ブロックを SSE で返し、ここで1回目のHTTPストリームを一旦閉じます！',
+    owner: '通信完了: Cloud ──SSE Stream──▶ Harness',
+    ownerColor: '#8b5cf6',
+    seqIdx: 3,
+    codeLines: [6, 7, 8],
+    warnLine: false,
+    msgKb: 20, resKb: 0,
+    wire: `HTTP/2 200 OK
+Content-Type: text/event-stream
+
+event: metadata
+data: {"run_id":"9000001","auto_router_selected":"claude-sonnet-4-6"}
+
+event: content_block_delta
+data: {"type":"thinking_delta","thinking":"まず ORDERS テーブルの件数と各カラムの NULL 率を集計するSQLを組む..."}
+
+event: content_block_delta
+data: {"type":"text_delta","text":"ORDERSテーブルのカラム構成と欠損率をSQLで集計します。"}
+
+event: content_block_start
+data: {
+  "type": "tool_use",
+  "tool_use": {
+    "tool_use_id": "toolu_bdrk_0119xaYWEwxzhjARTPV46vYd",
+    "name": "sql_execute",
+    "input": {
+      "description": "Count rows and null rates in SALES.PUBLIC.ORDERS",
+      "sql": "SELECT COUNT(*) AS total, COUNT_IF(AMOUNT IS NULL) AS null_amt FROM SALES.PUBLIC.ORDERS"
+    },
+    "client_side_execute": true
+  }
+}
+
+event: message_stop
+data: {"stop_reason": "tool_use"}  // ← 1回目のHTTPストリームはここで切断！`,
+    disk: `// .history.jsonl に assistant 行（text + tool_use）が追記される:
+{
+  "role": "assistant",
+  "content": [
+    { "type": "text", "text": "ORDERSテーブルのカラム構成と欠損率をSQLで集計します。" },
+    {
+      "type": "tool_use",
+      "tool_use": {
+        "tool_use_id": "toolu_bdrk_0119xaYWEwxzhjARTPV46vYd",
+        "name": "sql_execute",
+        "input": { "sql": "SELECT COUNT(*)..." },
+        "client_side_execute": true
+      }
+    }
+  ]
+}`,
+    hook: `// useAgentStream: Adding to toolUseMap: id=toolu_bdrk_0119xaYWEwxzhjARTPV46vYd
+// 続けて PreToolUse Hook 発火へ進む`
+  },
+  {
+    step: 5,
+    iter: 'ITERATION 1 · ローカル実行',
+    short: 'SQL実行 & tool_result 生成',
+    title: '⑤ ハーネスがローカルから Snowflake SQL を実行し、「擬似 user (tool_result)」を組み立てる',
+    desc: '読み取り専用 SELECT かつ RSS（Restricted Session Scope）子セッション有効時は自動承認されます。ハーネスが Snowflake SQL ドライバでクエリを実行し、返ってきた表データを role: "user" の tool_result ブロックに包みます。',
+    owner: '実行主体: Local Harness ⇄ Snowflake SQL',
+    ownerColor: '#10b981',
+    seqIdx: 4,
+    codeLines: [11, 13, 14, 15],
+    warnLine: false,
+    msgKb: 20, resKb: 6,
+    wire: `// ハーネスが「次のPOST」に積むために生成した擬似 user メッセージ:
+// ※ あなたは一言も打っていませんが、API仕様上 role: "user" になります！
+{
+  "role": "user",
+  "content": [
+    {
+      "type": "tool_result",
+      "tool_result": {
+        "tool_use_id": "toolu_bdrk_0119xaYWEwxzhjARTPV46vYd", // ← Step 4 の ID と一致！
+        "name": "sql_execute",
+        "status": "success",
+        "content": [
+          { "type": "text", "text": "[{\\"TOTAL\\": 128450, \\"NULL_AMT\\": 312}]" }
+        ],
+        "metrics": { "duration_ms": 640 }
+      }
+    }
+  ]
+}`,
+    disk: `// .history.jsonl に user (tool_result) 行が追記される:
+{"role":"user","content":[{"type":"tool_result","tool_result":{"tool_use_id":"toolu_bdrk_0119xaYWEwxzhjARTPV46vYd","name":"sql_execute","status":"success",...}}]}`,
+    hook: `// PreToolUse(sql_execute) → SQL実行 → PostToolUse(sql_execute) が連続発火！
+{
+  "hook_event_name": "PreToolUse",
+  "tool_name": "sql_execute",
+  "tool_use_id": "toolu_bdrk_0119xaYWEwxzhjARTPV46vYd"
+}
+// → Job Monitor 表示: 「稼働中 · 実行中: sql_execute」（Searching状態）`
+  },
+  {
+    step: 6,
+    iter: 'ITERATION 2 · API再送',
+    short: 'HTTPS POST #2 → write 要求',
+    title: '⑥ whileループ2周目：tool_result を持って再び POST → 今度は write ツール要求が返る',
+    desc: 'ハーネスの while ループが先頭に戻り、今の SQL 結果を積んで2回目の /api/v2/cortex/agent:run を叩きます。SQL結果を見たLLMは、次に「summary.html を書き出す write ツール」の呼び出しJSONを返します。',
+    owner: '通信往復: Iteration 2 (POST ⇄ SSE)',
+    ownerColor: '#8b5cf6',
+    seqIdx: 5,
+    codeLines: [4, 5, 6, 8],
+    warnLine: false,
+    msgKb: 22, resKb: 6,
+    wire: `// [往路] POST /api/v2/cortex/agent:run (Iteration 2)
+// thread_id: "1000042" に Step 5 の tool_result を追加送信
+// ─────────────────────────────────────────────
+// [復路] SSE Stream #2 からの応答:
+event: content_block_start
+data: {
+  "type": "tool_use",
+  "tool_use": {
+    "tool_use_id": "toolu_bdrk_012WriteHtml9981",
+    "name": "write",
+    "input": {
+      "file_path": "/Users/demo/analytics/summary.html",
+      "content": "<!DOCTYPE html><html>...欠損率 0.24% (312/128,450件)...</html>"
+    },
+    "client_side_execute": true
+  }
+}
+event: message_stop
+data: {"stop_reason": "tool_use"} // ← 2回目のHTTPストリームもここで終了`,
+    disk: `// .history.jsonl に2回目の assistant (tool_use: write) が追記される
+// まだ summary.html 自体はディスクに書かれていない！（権限チェック前）`,
+    hook: `// PostToolUse の直後に Thinking → 次の tool_use 受信へ`
+  },
+  {
+    step: 7,
+    iter: 'ITERATION 2 · 承認ゲート停止!',
+    short: 'PermissionRequest で一時停止',
+    title: '⑦ 権限ゲート（PermissionManager）が発動！人間の Approve まで while ループが完全停止',
+    desc: 'ファイル新規作成や未許可コマンドの場合、ハーネスは PermissionRequest Hook を発火させた上で stdio 応答待ちの await に入ります。この間、クラウド通信はゼロで、あなたが承認ボタンを押すまで永遠に止まります（上の黄色ボタンで再開できます！）。',
+    owner: 'ボール保持者: あなた！（承認待ちでブロック中）',
+    ownerColor: '#f59e0b',
+    seqIdx: 6,
+    codeLines: [12],
+    warnLine: true,
+    pauseGate: true,
+    msgKb: 22, resKb: 6,
+    wire: `// [Local Harness] ──stdio──▶ [UI (Electron)]
+{
+  "type": "permission_request",
+  "tool_use_id": "toolu_bdrk_012WriteHtml9981",
+  "tool_name": "write",
+  "file_path": "/Users/demo/analytics/summary.html"
+}
+
+// ⚠ HTTPストリーム #2 は既に切れており、HTTP POST #3 はまだ送られていない！
+// ⚠ ハーネスプロセスは人間のクリックを await して完全にスリープ中。`,
+    disk: `// session.json は outcome: "running" のまま変化なし
+// .history.jsonl の末尾は未完了の tool_use ("write") で止まっている状態`,
+    hook: `// PermissionRequest Hook が即時発火！
+{
+  "session_id": "01934a10-7c00-7000-8000-000000000001",
+  "hook_event_name": "PermissionRequest",
+  "tool_name": "write"
+}
+// → Job Monitor: オレンジ枠「承認待ち」に変化 ＋ Ping チャイム鳴動！`
+  },
+  {
+    step: 8,
+    iter: 'ITERATION 2 · 承認→書込',
+    short: 'ローカル書込 & tool_result',
+    title: '⑧ 人間が Approve → ハーネスが summary.html をディスクに書き込み tool_result を生成',
+    desc: 'あなたが承認すると UI から allow が返り、ハーネスの await が解けます。ローカルファイルシステムに summary.html を書き込み、stats.diff を更新して2個目の tool_result を作ります。',
+    owner: '実行主体: Local Harness (FS Write)',
+    ownerColor: '#10b981',
+    seqIdx: 7,
+    codeLines: [13, 14, 15],
+    warnLine: false,
+    msgKb: 22, resKb: 9,
+    wire: `// [UI] ──stdio──▶ [Harness]: { "behavior": "allow" }
+// ハーネスが fs.writeFile("/Users/demo/analytics/summary.html") を実行後、
+// 3回目の POST 用に組み立てる擬似 user (tool_result):
+{
+  "role": "user",
+  "content": [
+    {
+      "type": "tool_result",
+      "tool_result": {
+        "tool_use_id": "toolu_bdrk_012WriteHtml9981",
+        "name": "write",
+        "status": "success",
+        "content": [{ "type": "text", "text": "The file was written successfully (48 added)" }]
+      }
+    }
+  ]
+}`,
+    disk: `// 1. /Users/demo/analytics/summary.html が実ディスクに生成される
+// 2. session.json の stats.diff に {"fileCount": 1, "added": 48, "removed": 0} が記録される
+// 3. .history.jsonl に user (tool_result) が追記される`,
+    hook: `// PostToolUse(write) が発火 →「承認待ち」から「稼働中 (Working/Thinking)」へ即時復帰！`
+  },
+  {
+    step: 9,
+    iter: 'ITERATION 3 · 最終POST',
+    short: 'HTTPS POST #3 → 最終回答SSE',
+    title: '⑨ whileループ3周目：POST #3 に対し、今度は tool_use 無しの最終テキストだけが返る',
+    desc: 'write 成功の tool_result を受け取った LLM は「もう追加で呼ぶツールは無い」と判断し、最終報告テキストだけを SSE で返して stop_reason: "end_turn" を送ります。',
+    owner: '通信完了: Cloud ──Final SSE──▶ Harness',
+    ownerColor: '#29b5e8',
+    seqIdx: 8,
+    codeLines: [5, 6, 7, 8, 9],
+    warnLine: false,
+    msgKb: 25, resKb: 9,
+    wire: `// [往路] POST /api/v2/cortex/agent:run (Iteration 3)
+// ─────────────────────────────────────────────
+// [復路] SSE Stream #3:
+event: content_block_delta
+data: {"type":"text_delta","text":"ORDERSテーブルの欠損率（0.24%）を集計し、summary.html に出力しました。"}
+
+event: response_metadata
+data: {
+  "orchestration_model": "claude-sonnet-4-6",
+  "usage": { "credits_consumed": [{ "daily_credits_used": 14.2, "daily_credits_limit": 200 }] }
+}
+
+event: message_stop
+data: {"stop_reason": "end_turn"} // ← tool_use が 0 件！！`,
+    disk: `// .history.jsonl に最終 assistant テキスト行が追記される:
+{
+  "role": "assistant",
+  "content": [
+    { "type": "text", "text": "ORDERSテーブルの欠損率（0.24%）を集計し、summary.html に出力しました。" }
+  ]
+}`,
+    hook: `// toolCalls.length === 0 が成立 → いよいよ while (true) ループを break！`
+  },
+  {
+    step: 10,
+    iter: 'TURN COMPLETE · 完了・既読同期',
+    short: 'Stop発火 → 既読で自動消去',
+    title: '⑩ whileループ脱出 → Stop Hook 発火・outcome: "success" 保存・CoCo閲覧で自動消去',
+    desc: 'ハーネスが Stop Hook を発火し、session.json を outcome: "success" に書き換えて1ターンが完結します（合計3回のHTTP POST往復）。Job Monitor は Glass 音を鳴らして「新着完了・未確認」に出し、あなたがCoCoで4秒見ると自動で消えます。',
+    owner: 'ターン完了: 新着完了(未確認) → 4秒閲覧で消去',
+    ownerColor: '#10b981',
+    seqIdx: 9,
+    codeLines: [18, 19],
+    warnLine: false,
+    msgKb: 25, resKb: 9,
+    wire: `// [Harness] ──stdio (stream-json)──▶ [UI (Electron)]
+{
+  "type": "result",
+  "subtype": "success",
+  "session_id": "01934a10-7c00-7000-8000-000000000001",
+  "iterations": 3
+}`,
+    disk: `// <sid>.json が完了状態で確定保存される:
+"lastTurn": {
+  "requestId": "request_489f16b4-6ef5-4179-a88b-61912b168b1a",
+  "outcome": "success",
+  "historyLength": 440
+}
+// さらにあなたが CoCo でこのチャットを開く → state.vscdb の
+// agentManager.activeConversationV2 が一致 → 4秒後に Monitor から自動消去！`,
+    hook: `// Stop Hook 発火！
+{
+  "session_id": "01934a10-7c00-7000-8000-000000000001",
+  "hook_event_name": "Stop"
+}
+// → Job Monitor: Glass 完了チャイム鳴動 ＋「新着完了・未確認」カード表示`
+  }
+];
+
+/* =========================================================
+   SEQUENCE DIAGRAM ARROWS DATA (10 ROWS)
+   ========================================================= */
+const SEQ_ROWS = [
+  { from: 0, to: 1, color: '#38bdf8', label: '1. stdin user_input (stream-json)' },
+  { from: 1, to: 1, color: '#38bdf8', label: '2. <system-reminder> + Skill 注入 / JSONL保存' },
+  { from: 1, to: 3, color: '#29b5e8', label: '3. HTTPS POST #1 /api/v2/cortex/agent:run' },
+  { from: 3, to: 1, color: '#8b5cf6', label: '4. SSE #1: thinking + tool_use(sql_execute)' },
+  { from: 1, to: 2, color: '#10b981', label: '5. RSS SQL実行 → role:"user"(tool_result)生成' },
+  { from: 1, to: 3, color: '#8b5cf6', label: '6. POST #2 (tool_result) ⇄ SSE #2: tool_use(write)' },
+  { from: 1, to: 0, color: '#f59e0b', label: '7. PermissionRequest! 人間の Approve 待ち停止' },
+  { from: 0, to: 2, color: '#10b981', label: '8. Approve → summary.html 書込 & tool_result' },
+  { from: 1, to: 3, color: '#29b5e8', label: '9. POST #3 ⇄ SSE #3: 最終回答 (tool_use 0件)' },
+  { from: 1, to: 0, color: '#10b981', label: '10. while脱出 → Stop発火 → 4秒閲覧で消去' }
+];
+
+const LANE_X = [68, 212, 356, 496];
+const LANE_NAMES = ['User / UI', 'Local Harness', 'Local OS / SQL', 'Snowflake API'];
+
+let curIdx = 0;
+let curTab = 'wire';
+let autoTimer = null;
+
+function highlightCodeText(raw) {
+  return raw
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/(\/\/.*)/g, '<span class="tok-cmt">$1</span>')
+    .replace(/\b(POST|HTTP\/2|event|data)\b/g, '<span class="tok-kw">$1</span>')
+    .replace(/"([^"]+)":/g, '"<span class="tok-k">$1</span>":')
+    .replace(/: "([^"]*)"/g, ': "<span class="tok-s">$1</span>"')
+    .replace(/: (\d+(\.\d+)?|true|false)/g, ': <span class="tok-n">$1</span>');
+}
+
+function renderSequenceSVG(activeIdx) {
+  const svg = document.getElementById('seq-svg');
+  const activeRow = SEQ_ROWS[activeIdx];
+  let html = `
+    <defs>
+      <marker id="arr-cyan" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1 L 10 5 L 0 9 z" fill="#38bdf8"/>
+      </marker>
+      <marker id="arr-violet" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1 L 10 5 L 0 9 z" fill="#8b5cf6"/>
+      </marker>
+      <marker id="arr-emerald" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1 L 10 5 L 0 9 z" fill="#10b981"/>
+      </marker>
+      <marker id="arr-amber" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1 L 10 5 L 0 9 z" fill="#f59e0b"/>
+      </marker>
+    </defs>
+  `;
+
+  // Lifelines & headers
+  LANE_X.forEach((x, i) => {
+    const isActor = (i === activeRow.from || i === activeRow.to);
+    html += `
+      <line class="lane-line" x1="${x}" y1="34" x2="${x}" y2="288"/>
+      <rect class="lane-hdr ${isActor ? 'active-actor' : ''}" x="${x - 54}" y="4" width="108" height="26" rx="6"/>
+      <text x="${x}" y="21" text-anchor="middle" fill="${isActor ? '#fff' : '#94a3b8'}" font-size="10.5" font-weight="bold">${LANE_NAMES[i]}</text>
+    `;
+  });
+
+  // 10 step arrows
+  SEQ_ROWS.forEach((r, idx) => {
+    const y = 50 + idx * 24;
+    const stateCls = idx === activeIdx ? 'current' : (idx < activeIdx ? 'past' : '');
+    const x1 = LANE_X[r.from];
+    const x2 = LANE_X[r.to];
+    const marker =
+      r.color === '#8b5cf6' ? 'url(#arr-violet)' :
+      r.color === '#10b981' ? 'url(#arr-emerald)' :
+      r.color === '#f59e0b' ? 'url(#arr-amber)' : 'url(#arr-cyan)';
+
+    html += `<g class="seq-row ${stateCls}" data-ridx="${idx}">`;
+    if (idx === activeIdx) {
+      html += `<rect x="8" y="${y - 11}" width="544" height="20" rx="4" fill="rgba(41,181,232,0.09)"/>`;
+    }
+    if (x1 === x2) {
+      html += `<path d="M ${x1} ${y - 4} L ${x1 + 28} ${y - 4} L ${x1 + 28} ${y + 5} L ${x1 + 4} ${y + 5}" fill="none" stroke="${r.color}" stroke-width="2" marker-end="${marker}"/>`;
+      html += `<text x="${x1 + 36}" y="${y + 3}" fill="${idx === activeIdx ? '#fff' : '#cbd5e1'}" font-family="monospace" font-size="10">${r.label}</text>`;
+    } else {
+      const dir = x2 > x1 ? 1 : -1;
+      html += `<line x1="${x1}" y1="${y}" x2="${x2 - dir * 5}" y2="${y}" stroke="${r.color}" stroke-width="${idx === activeIdx ? 2.4 : 1.6}" marker-end="${marker}"/>`;
+      if (idx === activeIdx) {
+        html += `<circle r="4" fill="${r.color}">
+          <animate attributeName="cx" from="${x1}" to="${x2}" dur="0.95s" repeatCount="indefinite"/>
+          <animate attributeName="cy" from="${y}" to="${y}" dur="0.95s" repeatCount="indefinite"/>
+        </circle>`;
+      }
+      const labelX = Math.min(x1, x2) + 8;
+      html += `<text x="${labelX}" y="${y - 4}" fill="${idx === activeIdx ? '#fff' : '#cbd5e1'}" font-family="monospace" font-size="9.8" font-weight="${idx === activeIdx ? 'bold' : 'normal'}">${r.label}</text>`;
+    }
+    html += `</g>`;
+  });
+
+  svg.innerHTML = html;
+  svg.querySelectorAll('.seq-row').forEach(el => {
+    el.addEventListener('click', () => {
+      stopAuto();
+      setStep(Number(el.dataset.ridx));
+    });
+  });
+}
+
+function renderLoopCode(stepObj) {
+  const box = document.getElementById('loop-code');
+  box.innerHTML = HARNESS_CODE.map((line, i) => {
+    const isHl = stepObj.codeLines.includes(i);
+    const cls = isHl ? (stepObj.warnLine ? 'code-ln hl-warn' : 'code-ln hl') : 'code-ln';
+    const safe = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return `<div class="${cls}"><span class="ln-no">${i + 1}</span><span>${safe}</span></div>`;
+  }).join('');
+}
+
+function renderStepper() {
+  const el = document.getElementById('stepper');
+  el.innerHTML = STEPS.map((s, i) => `
+    <div class="step-pill ${i === curIdx ? 'active' : ''} ${s.pauseGate ? 'gate' : ''}" data-idx="${i}">
+      <div class="sn"><span>STEP ${s.step}</span><span>${s.pauseGate ? 'GATE' : ''}</span></div>
+      <div class="st">${s.short}</div>
+    </div>
+  `).join('');
+  el.querySelectorAll('.step-pill').forEach(p => {
+    p.addEventListener('click', () => {
+      stopAuto();
+      setStep(Number(p.dataset.idx));
+    });
+  });
+}
+
+function renderPayload() {
+  const s = STEPS[curIdx];
+  const raw = curTab === 'wire' ? s.wire : (curTab === 'disk' ? s.disk : s.hook);
+  document.getElementById('payload-viewer').innerHTML = `<pre>${highlightCodeText(raw)}</pre>`;
+}
+
+function setStep(idx) {
+  curIdx = (idx + STEPS.length) % STEPS.length;
+  const s = STEPS[curIdx];
+
+  renderStepper();
+  renderSequenceSVG(curIdx);
+  renderLoopCode(s);
+  renderPayload();
+
+  document.getElementById('dbg-counter').textContent = `STEP ${s.step} / ${STEPS.length}`;
+  document.getElementById('sum-iter').textContent = s.iter;
+  document.getElementById('sum-title').textContent = s.title;
+  document.getElementById('sum-desc').textContent = s.desc;
+
+  const ownerEl = document.getElementById('sum-owner');
+  ownerEl.textContent = s.owner;
+  ownerEl.style.borderColor = s.ownerColor;
+  ownerEl.style.color = s.ownerColor;
+
+  const r = SEQ_ROWS[curIdx];
+  document.getElementById('seq-direction').textContent = `${LANE_NAMES[r.from]} → ${LANE_NAMES[r.to]}`;
+
+  // Show Approve CTA on Step 7
+  document.getElementById('btn-gate-approve').style.display = s.pauseGate ? 'inline-flex' : 'none';
+
+  // Update Context Window Byte Meter
+  const totalKb = 26 + 106 + 35 + s.msgKb + s.resKb;
+  document.getElementById('ctx-total-label').textContent = `Total: ${totalKb.toFixed(1)} KB`;
+  document.getElementById('lg-msg-kb').textContent = `${s.msgKb}KB`;
+  document.getElementById('lg-res-kb').textContent = `${s.resKb}KB`;
+  document.getElementById('seg-sys').style.width = `${(26 / 220) * 100}%`;
+  document.getElementById('seg-skills').style.width = `${(106 / 220) * 100}%`;
+  document.getElementById('seg-tools').style.width = `${(35 / 220) * 100}%`;
+  document.getElementById('seg-msgs').style.width = `${(s.msgKb / 220) * 100}%`;
+  document.getElementById('seg-res').style.width = `${(s.resKb / 220) * 100}%`;
+}
+
+function stopAuto() {
+  if (autoTimer) {
+    clearTimeout(autoTimer);
+    autoTimer = null;
+  }
+  document.getElementById('btn-auto').textContent = '▶ 自動ステップ再生';
+}
+
+function runAuto() {
+  const s = STEPS[curIdx];
+  if (s.pauseGate) {
+    document.getElementById('btn-auto').textContent = '⏸ 承認ゲート停止中 (右のオレンジボタンをクリック)';
+    autoTimer = null;
+    return;
+  }
+  document.getElementById('btn-auto').textContent = '■ 自動再生を停止';
+  autoTimer = setTimeout(() => {
+    if (curIdx >= STEPS.length - 1) {
+      stopAuto();
+      return;
+    }
+    setStep(curIdx + 1);
+    runAuto();
+  }, 2900);
+}
+
+document.getElementById('btn-prev').addEventListener('click', () => { stopAuto(); setStep(curIdx - 1); });
+document.getElementById('btn-next').addEventListener('click', () => { stopAuto(); setStep(curIdx + 1); });
+document.getElementById('btn-auto').addEventListener('click', () => {
+  if (autoTimer) { stopAuto(); return; }
+  if (curIdx === STEPS.length - 1) setStep(0);
+  runAuto();
+});
+document.getElementById('btn-gate-approve').addEventListener('click', () => {
+  setStep(7); // Jump from Step 7 (idx 6) -> Step 8 (idx 7)
+  if (document.getElementById('btn-auto').textContent.includes('承認ゲート')) {
+    runAuto();
+  }
+});
+
+document.querySelectorAll('#payload-tabs .ptab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#payload-tabs .ptab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    curTab = btn.dataset.tab;
+    renderPayload();
+  });
+});
+
+setStep(0);
+</script>
+</body>
+</html>
